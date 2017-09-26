@@ -5,6 +5,7 @@ import argparse
 import logging
 
 import igraph
+from tqdm import tqdm
 
 from citerank.utils import (
   iter_read_csv_columns,
@@ -47,7 +48,7 @@ def main():
   target_column = args.target_column
 
   logger.info('reading: %s', args.links_path)
-  links = list(iter_read_csv_columns(args.links_path, [source_column, target_column]))
+  links = list(tqdm(iter_read_csv_columns(args.links_path, [source_column, target_column])))
   logger.info('links: %d', len(links))
 
   logger.info('determining unique labels')
