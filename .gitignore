@@ -1,0 +1,10 @@
+/.temp
+/.cache
+/.config
+/.vscode
+/venv
+/data
+
+/citerank.egg-info
+
+*.pyc
