@@ -4,6 +4,7 @@
 /.vscode
 /venv
 /data
+/.temp
 
 /citerank.egg-info
 
