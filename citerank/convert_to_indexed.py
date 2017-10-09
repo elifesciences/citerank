@@ -7,6 +7,7 @@ from shutil import rmtree
 from itertools import groupby
 import sys
 import hashlib
+import struct
 
 import lmdb
 
@@ -42,39 +43,62 @@ def encode_key(key):
     encoded_key = HASH_F(encoded_key).digest()
   return encoded_key
 
+def encode_value(value):
+  return value.encode('utf-8')
+
+def decode_value(value):
+  return value.decode('utf-8')
+
+def encode_index(index):
+  return struct.pack('Q', index)
+
+def decode_index(encoded_index):
+  return struct.unpack('Q', encoded_index)[0]
+
+def get_rev_lmdb_root(lmdb_root):
+  return os.path.join(lmdb_root, 'rev')
+
+TO_INDEX_DB_NAME = b'to_index'
+FROM_INDEX_DB_NAME = b'from_index'
+
 def map_grouped_items_to_index(coll, lmdb_root):
   if os.path.isdir(lmdb_root):
     rmtree(lmdb_root)
 
-  env = lmdb.open(lmdb_root, map_size=int(42e9))
+  env = lmdb.open(lmdb_root, map_size=int(42e9), max_dbs=2)
+  to_index_db = env.open_db(TO_INDEX_DB_NAME)
+  from_index_db = env.open_db(FROM_INDEX_DB_NAME)
 
   with env.begin(write=True) as txn:
-    with txn.cursor() as cursor:
-      next_id = 0
+    with txn.cursor(to_index_db) as to_index_cursor:
+      with txn.cursor(from_index_db) as from_index_cursor:
+        next_id = 0
 
-      def insert_or_get_next_id(s):
-        nonlocal next_id
+        def insert_or_get_next_id(s):
+          nonlocal next_id
 
-        try:
-          encoded_key = encode_key(s)
-          if cursor.put(encoded_key, str(next_id).encode(), overwrite=False):
-            this_id = next_id
-            next_id += 1
-            return this_id
-          else:
-            return cursor.item()[1].decode()
-        except:
-          raise RuntimeError("failed to insert record: {} ({}: {})".format(s, type(s), len(s)))
+          try:
+            encoded_key = encode_key(s)
+            encoded_index = encode_index(next_id)
+            if to_index_cursor.put(encoded_key, encoded_index, overwrite=False):
+              this_id = next_id
+              next_id += 1
+              from_index_cursor.put(encoded_index, encode_value(s))
+              return this_id
+            else:
+              return decode_index(to_index_cursor.item()[1])
+          except:
+            raise RuntimeError("failed to insert record: {} ({}: {})".format(s, type(s), len(s)))
 
-      for left, right_list in coll:
-        non_empty_right_list = [x for x in right_list if x]
-        if non_empty_right_list:
-          left_id = insert_or_get_next_id(left)
-          right_id_list = [
-            insert_or_get_next_id(right)
-            for right in non_empty_right_list
-          ]
-          yield left_id, right_id_list
+        for left, right_list in coll:
+          non_empty_right_list = [x for x in right_list if x]
+          if non_empty_right_list:
+            left_id = insert_or_get_next_id(left)
+            right_id_list = [
+              insert_or_get_next_id(right)
+              for right in non_empty_right_list
+            ]
+            yield left_id, right_id_list
 
 def output_grouped_items(coll, fp, delimiter):
   csv_writer = csv.writer(fp, delimiter=delimiter)
