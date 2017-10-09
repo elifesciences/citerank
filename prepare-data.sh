@@ -28,6 +28,7 @@ NUMBERED_EDGES_FILE="$OUTPUT_BASENAME-edges.tsv.gz"
 
 remove_header() { tail -n +2; }
 
+echo "writing to: $NUMBERED_EDGES_FILE"
 pv "$CITATIONS_FILE" | zcat - | remove_header | \
   python -m citerank.convert_to_indexed --lmdb-root="$LMDB_ROOT" | \
   gzip > "$NUMBERED_EDGES_FILE"
