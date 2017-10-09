@@ -8,6 +8,7 @@ from itertools import groupby
 import sys
 import hashlib
 import struct
+from operator import add
 
 import lmdb
 
@@ -49,6 +50,13 @@ def encode_value(value):
 def decode_value(value):
   return value.decode('utf-8')
 
+def encode_value_with_counts(value, counts):
+  return struct.pack('Q' * (len(counts) + 1), value, *counts)
+
+def decode_value_with_counts(encoded_value_with_counts):
+  value, *counts = struct.unpack('QQQ', encoded_value_with_counts)
+  return value, counts
+
 def encode_index(index):
   return struct.pack('Q', index)
 
@@ -61,11 +69,32 @@ def get_rev_lmdb_root(lmdb_root):
 TO_INDEX_DB_NAME = b'to_index'
 FROM_INDEX_DB_NAME = b'from_index'
 
+def update_item_and_return_id(cursor, key, get_next_id_for, counts):
+  try:
+    encoded_key = encode_key(key)
+    value = cursor.get(encoded_key)
+    if value is not None:
+      current_id, current_counts = decode_value_with_counts(value)
+      cursor.put(encoded_key, encode_value_with_counts(
+        current_id,
+        list(map(add, current_counts, counts))
+      ))
+      return current_id
+    else:
+      this_id = get_next_id_for(key)
+      cursor.put(encoded_key, encode_value_with_counts(
+        this_id,
+        counts
+      ))
+      return this_id
+  except:
+    raise RuntimeError("failed to insert record: {} ({}: {})".format(key, type(key), len(key)))
+
 def map_grouped_items_to_index(coll, lmdb_root):
   if os.path.isdir(lmdb_root):
     rmtree(lmdb_root)
 
-  env = lmdb.open(lmdb_root, map_size=int(42e9), max_dbs=2)
+  env = lmdb.open(lmdb_root, map_size=int(42e9), max_dbs=2, writemap=True)
   to_index_db = env.open_db(TO_INDEX_DB_NAME)
   from_index_db = env.open_db(FROM_INDEX_DB_NAME)
 
@@ -74,28 +103,30 @@ def map_grouped_items_to_index(coll, lmdb_root):
       with txn.cursor(from_index_db) as from_index_cursor:
         next_id = 0
 
-        def insert_or_get_next_id(s):
+        def get_next_id_for(s):
           nonlocal next_id
 
-          try:
-            encoded_key = encode_key(s)
-            encoded_index = encode_index(next_id)
-            if to_index_cursor.put(encoded_key, encoded_index, overwrite=False):
-              this_id = next_id
-              next_id += 1
-              from_index_cursor.put(encoded_index, encode_value(s))
-              return this_id
-            else:
-              return decode_index(to_index_cursor.item()[1])
-          except:
-            raise RuntimeError("failed to insert record: {} ({}: {})".format(s, type(s), len(s)))
+          this_id = next_id
+          next_id += 1
+          from_index_cursor.put(encode_index(this_id), encode_value(s))
+          return this_id
 
         for left, right_list in coll:
           non_empty_right_list = [x for x in right_list if x]
           if non_empty_right_list:
-            left_id = insert_or_get_next_id(left)
+            left_id = update_item_and_return_id(
+              to_index_cursor,
+              left,
+              get_next_id_for=get_next_id_for,
+              counts=[0, len(non_empty_right_list)]
+            )
             right_id_list = [
-              insert_or_get_next_id(right)
+              update_item_and_return_id(
+                to_index_cursor,
+                right,
+                get_next_id_for=get_next_id_for,
+                counts=[1, 0]
+              )
               for right in non_empty_right_list
             ]
             yield left_id, right_id_list

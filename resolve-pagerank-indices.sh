@@ -18,5 +18,5 @@ remove_pagerank_header() { grep -v 'id'; }
 
 pv $PAGERANK_PEER_FILE_PREFIX-*.tsv | \
   remove_pagerank_header | \
-  python -m citerank.resolve_indices --lmdb-root="$LMDB_ROOT" | \
+  python -m citerank.resolve_indices --lmdb-root="$LMDB_ROOT" --include-counts | \
   gzip > "$RESOLVED_PAGERANK_FILE"
